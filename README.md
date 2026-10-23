@@ -176,3 +176,4 @@ CI runs mechanical checks and builds an analysis image. It contains no live depl
 Hyperliquid's terms restrict its hosted interface for U.S. residents and prohibit evading interface restrictions; those terms alone do not resolve eligibility for direct API trading ([Hyperliquid terms](https://app.hyperliquid.xyz/terms)).
 
 The next milestone is authenticated JEV verification, richer market-data quality measurements, and a tested testnet execution module. Live trading remains a separate, explicitly scoped decision.
+# hyperliquid-jev-bot
