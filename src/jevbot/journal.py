@@ -42,7 +42,28 @@ class Journal:
                 reserved_at REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS calls_at ON calls(reserved_at);
-            PRAGMA user_version=1;
+            CREATE TABLE IF NOT EXISTS shadow_experiments (
+                id TEXT PRIMARY KEY,
+                config TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS shadow_trades (
+                id TEXT PRIMARY KEY,
+                experiment TEXT NOT NULL,
+                source TEXT NOT NULL,
+                instrument TEXT NOT NULL,
+                lane TEXT NOT NULL,
+                regime TEXT NOT NULL,
+                signal_ms INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                state TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(experiment,source,instrument,lane,signal_ms)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS shadow_active_slot
+                ON shadow_trades(source,instrument,lane)
+                WHERE state IN ('PENDING','OPEN');
+            CREATE INDEX IF NOT EXISTS shadow_state ON shadow_trades(state);
+            PRAGMA user_version=2;
         """)
         self.db.commit()
 
@@ -55,20 +76,30 @@ class Journal:
             is not None
         )
 
-    def record(self, source: str, instrument: str, bar_ms: int, status: str, payload: dict):
-        with self.db:
-            self.db.execute(
-                """INSERT OR IGNORE INTO decisions
+    def record(
+        self,
+        source: str,
+        instrument: str,
+        bar_ms: int,
+        status: str,
+        payload: dict,
+        *,
+        commit: bool = True,
+    ):
+        self.db.execute(
+            """INSERT OR IGNORE INTO decisions
                 (created_at,source,instrument,bar_ms,status,payload) VALUES (?,?,?,?,?,?)""",
-                (
-                    time.time(),
-                    source,
-                    instrument,
-                    bar_ms,
-                    status,
-                    json.dumps(payload, allow_nan=False),
-                ),
-            )
+            (
+                time.time(),
+                source,
+                instrument,
+                bar_ms,
+                status,
+                json.dumps(payload, allow_nan=False),
+            ),
+        )
+        if commit:
+            self.db.commit()
 
     def event(self, kind: str, detail: dict):
         with self.db:

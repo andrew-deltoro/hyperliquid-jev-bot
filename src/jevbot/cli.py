@@ -22,9 +22,19 @@ from jevbot.adapters import (
 )
 from jevbot.decisions import DecisionError, DemoProvider, JevProvider
 from jevbot.demo import fixture
+from jevbot.diagnostics import breakdown, markdown_breakdown
 from jevbot.engine import Engine
 from jevbot.journal import Journal
 from jevbot.models import Settings
+from jevbot.shadow import markdown_scoreboard, scoreboard, tracked_instruments
+
+
+def preserve_shadow_watchlist(active, journal: Journal):
+    """Do not abandon pending/open shadow tickets when auto-selection rotates."""
+    tracked = tracked_instruments(journal)
+    tracked_ids = {instrument.id for instrument in tracked}
+    count = max(len(active), len(tracked))
+    return (tracked + [item for item in active if item.id not in tracked_ids])[:count]
 
 
 @contextlib.contextmanager
@@ -59,6 +69,7 @@ def concise(result: dict) -> dict:
         "source": payload.get("data_source"),
         "provider": payload.get("decision_provider"),
         "execution_authorized": False,
+        "decision_stage": payload.get("diagnostics", {}).get("stage"),
     }
 
 
@@ -68,7 +79,8 @@ def markdown_report(journal: Journal) -> str:
         "# Hyperliquid JEV Analysis Report",
         "",
         f"Generated: {datetime.now(UTC).isoformat()}. "
-        "This report contains analysis only; no orders or simulated fills are generated.",
+        "This report contains analysis only; no real orders are generated. "
+        "Hypothetical fills are reported separately by the scoreboard.",
         "",
         "## Journal totals",
         "",
@@ -105,6 +117,11 @@ def markdown_report(journal: Journal) -> str:
         "",
         "There is no backtest-return threshold or edge-approval gate. "
         "The journal records operational skips, model WAIT decisions, and missing credentials explicitly.",
+        "",
+        "## v0.2 diagnostics and simulated scoreboard",
+        "",
+        "Run `jevbot why-wait` for decision-path counts and `jevbot scoreboard` for forward-only "
+        "simulated tickets. No real fills or account returns are produced.",
         "",
     ]
     return "\n".join(lines)
@@ -181,6 +198,7 @@ async def operate(args, settings: Settings, journal: Journal) -> int:
         active, missing = select_active(
             registry, settings.symbols, settings.auto_select, settings.active_limit
         )
+        active = preserve_shadow_watchlist(active, journal)
         journal.set("registry", [item.model_dump() for item in registry])
         emit(
             {
@@ -228,6 +246,7 @@ async def operate(args, settings: Settings, journal: Journal) -> int:
                     active, _ = select_active(
                         registry, settings.symbols, settings.auto_select, settings.active_limit
                     )
+                    active = preserve_shadow_watchlist(active, journal)
                     journal.set("registry", [item.model_dump() for item in registry])
                 for warning in refresh_warnings:
                     journal.event("DISCOVERY_WARNING", warning)
@@ -255,6 +274,17 @@ def parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="View decision journal")
     report.add_argument("--output", help="Write a Markdown report")
     report.add_argument("--json", action="store_true")
+    for name, help_text, hours in (
+        ("scoreboard", "Forward-only simulated strategy comparison", 0),
+        ("why-wait", "Observed decision-path diagnostics, not invented AI reasoning", 24),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--hours", type=float, default=hours, help="0 means all history")
+        command.add_argument("--source", choices=["live", "synthetic", "all"], default="live")
+        command.add_argument("--json", action="store_true")
+        command.add_argument("--output", help="Write Markdown or JSON to a file")
+        if name == "scoreboard":
+            command.add_argument("--by-regime", action="store_true")
     return result
 
 
@@ -266,13 +296,32 @@ def main() -> int:
             settings.database = args.database
         if getattr(args, "cycles", 0) < 0:
             raise ValueError("cycles must be nonnegative")
+        import math
+
+        if not math.isfinite(getattr(args, "hours", 0)) or getattr(args, "hours", 0) < 0:
+            raise ValueError("hours must be finite and nonnegative")
         os.umask(0o077)
-        if args.command == "report":
+        if args.command in ("report", "scoreboard", "why-wait"):
             if not Path(settings.database).exists():
                 raise ValueError("Journal does not exist; run demo or scan first")
             journal = Journal(settings.database)
             try:
-                if args.json:
+                if args.command in ("scoreboard", "why-wait"):
+                    if args.command == "scoreboard":
+                        data = scoreboard(
+                            journal, hours=args.hours, source=args.source, by_regime=args.by_regime
+                        )
+                        text = markdown_scoreboard(data)
+                    else:
+                        data = breakdown(journal, hours=args.hours, source=args.source)
+                        text = markdown_breakdown(data)
+                    if args.json:
+                        text = json.dumps(data, allow_nan=False, indent=2) + "\n"
+                    if args.output:
+                        Path(args.output).write_text(text)
+                    else:
+                        print(text)
+                elif args.json:
                     emit(journal.summary())
                 else:
                     text = markdown_report(journal)

@@ -3,7 +3,94 @@ from __future__ import annotations
 import hashlib
 from decimal import ROUND_DOWN, Decimal
 
-from jevbot.models import PROFILES, Candidate, Candle, Features, Instrument, PreviewSettings
+from jevbot.models import (
+    PROFILES,
+    STRATEGIES,
+    Candidate,
+    Candle,
+    Features,
+    Instrument,
+    PreviewSettings,
+)
+
+
+def trigger_evidence(strategy: str, bars: list[Candle], features: Features) -> dict:
+    bar, previous = bars[-1], bars[-2]
+    common = {"not_shock": features.regime != "shock"}
+    if strategy == "volatility_breakout":
+        buffer = features.atr * 0.1
+        common["volume_confirmation"] = features.volume_ratio >= 1.2
+        long = {"break_up": bar.close > features.prior_high + buffer}
+        short = {"break_down": bar.close < features.prior_low - buffer}
+        reasons = {
+            "long": ["PRIOR_RANGE_BREAK_UP", "VOLUME_CONFIRMED"],
+            "short": ["PRIOR_RANGE_BREAK_DOWN", "VOLUME_CONFIRMED"],
+        }
+    elif strategy == "trend_pullback":
+        long = {
+            "uptrend": features.regime == "trend_up",
+            "pullback_to_ema": previous.low <= features.previous_ema_fast + features.atr * 0.25,
+            "ema_reclaim": bar.close > features.ema_fast,
+            "resumption": bar.close > previous.high,
+        }
+        short = {
+            "downtrend": features.regime == "trend_down",
+            "pullback_to_ema": previous.high >= features.previous_ema_fast - features.atr * 0.25,
+            "ema_reclaim": bar.close < features.ema_fast,
+            "resumption": bar.close < previous.low,
+        }
+        reasons = {
+            "long": ["UPTREND", "PULLBACK_RESUMPTION"],
+            "short": ["DOWNTREND", "PULLBACK_RESUMPTION"],
+        }
+    elif strategy == "mean_reversion":
+        common["range_regime"] = features.regime == "range"
+        long = {
+            "lower_excursion": features.prior_zscore < -1.5,
+            "reversion_confirmation": features.zscore > features.prior_zscore + 0.25,
+        }
+        short = {
+            "upper_excursion": features.prior_zscore > 1.5,
+            "reversion_confirmation": features.zscore < features.prior_zscore - 0.25,
+        }
+        reasons = {
+            "long": ["LOWER_EXCURSION", "REVERSION_CONFIRMATION"],
+            "short": ["UPPER_EXCURSION", "REVERSION_CONFIRMATION"],
+        }
+    elif strategy == "liquidity_sweep":
+        swept_low = bar.low < features.prior_low and bar.close > features.prior_low
+        swept_high = bar.high > features.prior_high and bar.close < features.prior_high
+        long = {
+            "low_sweep_reclaim": swept_low,
+            "no_double_sweep": not swept_high,
+            "bullish_close": bar.close > bar.open,
+        }
+        short = {
+            "high_sweep_reclaim": swept_high,
+            "no_double_sweep": not swept_low,
+            "bearish_close": bar.close < bar.open,
+        }
+        reasons = {
+            "long": ["PRIOR_LOW_SWEEP", "RANGE_RECLAIM"],
+            "short": ["PRIOR_HIGH_SWEEP", "RANGE_RECLAIM"],
+        }
+    else:
+        raise ValueError("Unknown strategy")
+    long, short = {**common, **long}, {**common, **short}
+    direction = "long" if all(long.values()) else "short" if all(short.values()) else None
+    return {
+        "triggered": direction is not None,
+        "direction": direction,
+        "reasons": reasons[direction] if direction else [],
+        "long_conditions": long,
+        "short_conditions": short,
+        "unmet_long": [key for key, value in long.items() if not value],
+        "unmet_short": [key for key, value in short.items() if not value],
+    }
+
+
+def inspect_setups(bars: list[Candle], features: Features) -> dict:
+    return {strategy: trigger_evidence(strategy, bars, features) for strategy in STRATEGIES}
 
 
 def generate(
@@ -13,42 +100,9 @@ def generate(
         return []
     strategy, profile = route.split(":")
     policy = PROFILES[profile]
-    bar, previous = bars[-1], bars[-2]
-    direction = None
-    reasons = []
-    # All reference highs/lows exclude the current completed candle.
-    if strategy == "volatility_breakout":
-        buffer = features.atr * 0.1
-        if features.volume_ratio >= 1.2:
-            if bar.close > features.prior_high + buffer:
-                direction, reasons = "long", ["PRIOR_RANGE_BREAK_UP", "VOLUME_CONFIRMED"]
-            elif bar.close < features.prior_low - buffer:
-                direction, reasons = "short", ["PRIOR_RANGE_BREAK_DOWN", "VOLUME_CONFIRMED"]
-    elif strategy == "trend_pullback":
-        if features.regime == "trend_up" and (
-            previous.low <= features.previous_ema_fast + features.atr * 0.25
-            and bar.close > features.ema_fast
-            and bar.close > previous.high
-        ):
-            direction, reasons = "long", ["UPTREND", "PULLBACK_RESUMPTION"]
-        elif features.regime == "trend_down" and (
-            previous.high >= features.previous_ema_fast - features.atr * 0.25
-            and bar.close < features.ema_fast
-            and bar.close < previous.low
-        ):
-            direction, reasons = "short", ["DOWNTREND", "PULLBACK_RESUMPTION"]
-    elif strategy == "mean_reversion" and features.regime == "range":
-        if features.prior_zscore < -1.5 and features.zscore > features.prior_zscore + 0.25:
-            direction, reasons = "long", ["LOWER_EXCURSION", "REVERSION_CONFIRMATION"]
-        elif features.prior_zscore > 1.5 and features.zscore < features.prior_zscore - 0.25:
-            direction, reasons = "short", ["UPPER_EXCURSION", "REVERSION_CONFIRMATION"]
-    elif strategy == "liquidity_sweep":
-        swept_low = bar.low < features.prior_low and bar.close > features.prior_low
-        swept_high = bar.high > features.prior_high and bar.close < features.prior_high
-        if swept_low and not swept_high and bar.close > bar.open:
-            direction, reasons = "long", ["PRIOR_LOW_SWEEP", "RANGE_RECLAIM"]
-        elif swept_high and not swept_low and bar.close < bar.open:
-            direction, reasons = "short", ["PRIOR_HIGH_SWEEP", "RANGE_RECLAIM"]
+    bar = bars[-1]
+    evidence = trigger_evidence(strategy, bars, features)
+    direction, reasons = evidence["direction"], evidence["reasons"]
     if direction is None:
         return []
     stop_distance = features.atr * float(policy["stop_atr"])

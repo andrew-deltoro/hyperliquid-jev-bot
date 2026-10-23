@@ -4,18 +4,21 @@ import hashlib
 import json
 import time
 
+from jevbot import __version__
 from jevbot.decisions import PROMPT_VERSION, DecisionError, DecisionProvider
+from jevbot.diagnostics import explain
 from jevbot.features import DataQualityError, calculate, closed_candles, routing_options
 from jevbot.journal import Journal
-from jevbot.models import Candle, Instrument, Settings
-from jevbot.strategies import generate, size_preview
+from jevbot.models import STRATEGIES, Candle, Instrument, Settings
+from jevbot.shadow import advance, enqueue
+from jevbot.strategies import generate, inspect_setups, size_preview
 
 
 class Engine:
     def __init__(self, settings: Settings, journal: Journal, provider: DecisionProvider):
         self.settings, self.journal, self.provider = settings, journal, provider
         self.config_hash = hashlib.sha256(
-            json.dumps(settings.model_dump(), sort_keys=True).encode()
+            json.dumps([__version__, settings.model_dump()], sort_keys=True).encode()
         ).hexdigest()
 
     async def analyze(
@@ -44,12 +47,65 @@ class Engine:
             "instrument": instrument.model_dump(),
             "observed_at_ms": now_ms,
             "macro": macro,
+            "decision_stage": "precheck",
+            "shadow_collection_enabled": self.settings.shadow.enabled,
         }
         bar_ms = bars[-1].start_ms if bars else now_ms // 60000 * 60000
+        baselines = []
 
         def finish(status: str):
             payload["status"] = status
-            self.journal.record(source, instrument.id, bar_ms, status, payload)
+            payload["diagnostics"] = explain(status, payload)
+            # No DB transaction is held across a model request. Atomically write
+            # this decision and its new shadow intents after the request finishes.
+            with self.journal.db:
+                slots = {}
+                if self.settings.shadow.enabled and "features" in payload:
+                    self.journal.db.execute(
+                        "INSERT OR IGNORE INTO shadow_experiments VALUES (?,?)",
+                        (
+                            self.config_hash,
+                            json.dumps(
+                                {
+                                    "preview": self.settings.preview.model_dump(),
+                                    "shadow": self.settings.shadow.model_dump(),
+                                },
+                                allow_nan=False,
+                            ),
+                        ),
+                    )
+                observed_ms = now_ms + int((time.monotonic() - started) * 1000)
+                for candidate in baselines:
+                    lane = f"rules:{candidate.strategy}"
+                    slots[lane] = enqueue(
+                        self.journal,
+                        self.settings,
+                        self.config_hash,
+                        source,
+                        instrument,
+                        lane,
+                        candidate,
+                        payload["features"]["regime"],
+                        bar_ms,
+                        observed_ms,
+                    )
+                if status == "PROPOSAL_ONLY":
+                    from jevbot.models import Candidate
+
+                    slots["jev_policy"] = enqueue(
+                        self.journal,
+                        self.settings,
+                        self.config_hash,
+                        source,
+                        instrument,
+                        "jev_policy",
+                        Candidate.model_validate(payload["selected_candidate"]),
+                        payload["features"]["regime"],
+                        bar_ms,
+                        observed_ms,
+                    )
+                payload["shadow_slots"] = slots
+                self.journal.record(source, instrument.id, bar_ms, status, payload, commit=False)
             return {"instrument": instrument.symbol, "status": status, "payload": payload}
 
         if instrument.kind != "perp" or not instrument.analysis_supported:
@@ -61,13 +117,27 @@ class Engine:
         except DataQualityError as error:
             return finish(str(error))
         bar_ms = valid[-1].start_ms
+        # Existing tickets progress even if new shadow entries are disabled.
+        advance(self.journal, source, instrument.id, valid)
         if self.journal.seen(source, instrument.id, bar_ms):
             return {"instrument": instrument.symbol, "status": "DUPLICATE_BAR"}
+        payload["decision_stage"] = "features"
         try:
             features = calculate(valid)
         except DataQualityError as error:
             return finish(str(error))
         payload["features"] = features.model_dump()
+        payload["rule_setups"] = inspect_setups(valid, features)
+        if self.settings.shadow.enabled:
+            for strategy in STRATEGIES:
+                baselines.extend(
+                    generate(
+                        instrument,
+                        valid,
+                        features,
+                        f"{strategy}:{self.settings.shadow.baseline_profile}",
+                    )
+                )
         payload["bar_start_ms"] = bar_ms
         payload["snapshot_id"] = hashlib.sha256(
             json.dumps(
@@ -77,6 +147,8 @@ class Engine:
         if features.regime == "shock":
             return finish("SHOCK_NO_ENTRY")
         options = routing_options(features)
+        payload["eligible_routes"] = list(options)
+        payload["decision_stage"] = "router"
         state_key = f"route:{source}:{instrument.id}"
         previous = self.journal.get(state_key, {})
         # A new configuration or model must not inherit a cached old decision.
@@ -109,7 +181,9 @@ class Engine:
                     payload["route_reason"] = "MINIMUM_DWELL"
                 else:
                     route = proposal
-                    payload["route_reason"] = "JEV_SELECTION"
+                    payload["route_reason"] = (
+                        "JEV_SELECTION" if self.provider.name == "jev" else "DEMO_SELECTION"
+                    )
                 applied_decision = (
                     previous.get("applied_decision", previous.get("decision"))
                     if route != proposal
@@ -137,6 +211,7 @@ class Engine:
             )
             if route == "WAIT":
                 return finish("JEV_WAIT")
+            payload["decision_stage"] = "trigger"
             candidates = generate(instrument, valid, features, route)
             payload["candidates"] = [candidate.model_dump() for candidate in candidates]
             if not candidates:
@@ -151,6 +226,7 @@ class Engine:
                 for candidate in candidates
             }
             choices["WAIT"] = "Do not propose any candidate now."
+            payload["decision_stage"] = "candidate"
             answer = await self.provider.choose(payload, choices, "candidate_selection")
             payload["candidate_decision"] = answer.model_dump()
             if time.monotonic() - started >= self.settings.decision_ttl_seconds:
@@ -158,6 +234,7 @@ class Engine:
             if answer.choice == "WAIT":
                 return finish("JEV_WAIT")
             chosen = next(candidate for candidate in candidates if candidate.id == answer.choice)
+            payload["decision_stage"] = "sizing"
             payload["selected_candidate"] = chosen.model_dump()
             payload["sizing_preview"] = size_preview(chosen, instrument, self.settings.preview)
             if not payload["sizing_preview"]["risk_math_valid"]:

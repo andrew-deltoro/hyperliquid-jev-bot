@@ -25,3 +25,12 @@ risk_fraction = 0.0025
 max_leverage = 3
 max_notional_fraction = 1
 cost_buffer_bps = 12
+
+[shadow]
+enabled = true
+baseline_profile = "standard"
+# Hypothetical costs, NOT the actual fee tier or funding rate of an account.
+fee_bps_per_side = 4.5
+slippage_bps_per_side = 2
+# Conservative flat hourly debit applied to both long and short tickets.
+funding_cost_bps_per_hour = 0.5

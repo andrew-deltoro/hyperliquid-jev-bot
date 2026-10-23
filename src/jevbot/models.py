@@ -36,6 +36,20 @@ class PreviewSettings(StrictModel):
     cost_buffer_bps: float = Field(default=12, ge=0, le=200)
 
 
+class ShadowSettings(StrictModel):
+    enabled: bool = True
+    baseline_profile: Literal["tight", "standard", "wide"] = "standard"
+    fee_bps_per_side: float = Field(default=4.5, ge=0, le=200)
+    slippage_bps_per_side: float = Field(default=2, ge=0, le=200)
+    funding_cost_bps_per_hour: float = Field(default=0.5, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def supported_cost_buffer(self):
+        if 2 * (self.fee_bps_per_side + self.slippage_bps_per_side) > 200:
+            raise ValueError("Round-trip fee/slippage buffer must not exceed 200 bps")
+        return self
+
+
 class Settings(StrictModel):
     mode: Literal["analysis"] = "analysis"
     database: str = "data/journal.sqlite3"
@@ -55,6 +69,7 @@ class Settings(StrictModel):
     skylark_readings_file: str = ""
     skylark_max_age_days: int = Field(default=10, ge=1, le=30)
     preview: PreviewSettings = Field(default_factory=PreviewSettings)
+    shadow: ShadowSettings = Field(default_factory=ShadowSettings)
 
     @model_validator(mode="after")
     def symbol_budget(self):

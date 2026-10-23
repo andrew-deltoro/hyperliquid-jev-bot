@@ -1,8 +1,10 @@
 # Hyperliquid JEV Adaptive Bot
 
-Version 0.1.0 is a runnable, analysis-only Python service for a Linux VPS. It reads public Hyperliquid data, calculates intraday regimes, lets JEV select bounded strategy profiles and candidates, and stores decisions in a local journal.
+Version 0.2.0 is a runnable, analysis-only Python service for a Linux VPS. It reads public Hyperliquid data, calculates intraday regimes, lets JEV select bounded strategy profiles and candidates, and stores decisions in a local journal.
 
-**This release cannot place orders.** It has no wallet signer, exchange-order adapter, private account reader, live authorization switch, or withdrawal capability. It is not a backtest engine, paper-fill simulator, or proven profitable system.
+**This release cannot place orders.** It has no wallet signer, exchange-order adapter, private account reader, live authorization switch, or withdrawal capability. It now includes a forward-only hypothetical trade scoreboard; it is not a backtest approval engine or a proven profitable system.
+
+For the new scoreboard, WAIT diagnostics, and the Docker permission fix, read [UPGRADE_V0_2.md](UPGRADE_V0_2.md). Existing v0.1 journals are preserved and extended with additive tables.
 
 ## What works now
 
@@ -13,6 +15,8 @@ Version 0.1.0 is a runnable, analysis-only Python service for a Linux VPS. It re
 - **Adaptation:** JEV selects a joint strategy/profile choice; routing refresh, minimum dwell, and cached state limit unnecessary switching and calls.
 - **JEV integration:** Real TypeSafe HTTP adapter with strict response validation, timeouts, rolling-hour call cap, and no silent substitute on live data.
 - **Journal:** SQLite/WAL records inputs, model decisions, versions, reason codes, candidates, and hypothetical sizing. State persists across restarts.
+- **Scoreboard:** Four deterministic baseline lanes plus a JEV policy lane, with future-bar simulated entries, modeled costs, exits, and unresolved-path tracking.
+- **WAIT diagnostics:** Separate strategy-selection WAIT, candidate WAIT, no setup, call caps, and API/data failures. Rule-trigger evidence is available without extra model calls.
 - **Skylark:** Free source-health checks and optional import of a legitimately obtained local reading bundle. No payment code or automatic paid fetch.
 - **Operations:** CLI, Docker Compose, single-writer lock, log rotation, healthcheck, deterministic tests, and GitHub Actions configuration.
 
@@ -30,7 +34,7 @@ jevbot demo
 jevbot report
 ```
 
-The demo makes no network calls. Its synthetic market scenarios use a deterministic `demo_rule_stub`, not JEV, and every record is labeled accordingly. It does not manufacture historical returns or paper fills.
+The demo makes no network calls. Its synthetic market scenarios use a deterministic `demo_rule_stub`, not JEV, and every record is labeled accordingly. It can create pending synthetic shadow tickets, but does not fill them from the same signal candle or manufacture historical returns.
 
 For a separate demo journal:
 
@@ -57,6 +61,8 @@ The default pinned model is a documented model ID, but availability must be conf
 `doctor --check-jev` makes one potentially billable model request. Analysis also makes model requests when needed, up to the configured rolling-hour cap; this is a call-count ceiling, not a guaranteed dollar budget.
 
 If a key is missing, public market analysis still runs but records `JEV_UNAVAILABLE`. It does not convert demo decisions into live JEV decisions. `JEV_AUTH_VIA_PROXY=1` is reserved for an authenticated Computer credential-proxy wrapper and should not be set on your VPS.
+
+That proxy is scoped to TypeSafe, so public Hyperliquid and Skylark reads must be collected separately outside it. In proxy mode, `doctor` skips the unrelated source-health request rather than misreporting a scoped-access failure as a service outage.
 
 ## Read-only live analysis
 
@@ -96,7 +102,35 @@ Profiles adjust ATR-based stop distance, target multiples, and proposed maximum 
 
 No backtest result, Sharpe threshold, statistical significance, or edge statement is required. `NO_SETUP` means the configured trigger did not happen; `JEV_WAIT` means JEV chose not to propose the setup, not that a historical performance committee rejected it.
 
-The proposed follow-up online performance allocator is not implemented. Version 0.1 adapts to observed market conditions, but does not learn profitability from realized fills because it has no fills.
+The proposed follow-up online performance allocator is not implemented. Version 0.2 adapts to observed market conditions and measures hypothetical outcomes, but does not change allocation based on those outcomes or claim real fills.
+
+## Scoreboard and WAIT diagnostics
+
+```bash
+jevbot why-wait --hours 24
+jevbot why-wait --hours 24 --json
+jevbot scoreboard
+jevbot scoreboard --by-regime
+jevbot scoreboard --source synthetic
+```
+
+Inside the running Docker service, prefix each command with `docker compose exec analyzer`. If your SSH user cannot access Docker's socket, temporarily prefix that with `sudo`; see the upgrade guide for the persistent group-membership fix.
+
+Collection begins after this upgrade. There is no historical backfill from earlier decisions, and old data is not silently turned into simulated profit. All four baseline strategies run deterministically on each valid snapshot, even when JEV chooses WAIT or hits its call cap.
+
+The scoreboard groups by instrument, configuration/version hash, source, and lane; optional regime grouping uses the regime at the original signal. Zero-ticket lanes remain visible after a valid observation, and unresolved trades remain visible but excluded from closed P&L.
+
+Default modeled costs are 4.5 bps per side in fees, 2 bps per side in adverse slippage, and a flat 0.5 bps/hour funding-cost allowance. These are configurable hypothetical assumptions, not the user's actual fee tier or exchange funding rates. Numbers are modeled instrument price-quote units, not funded-account dollar returns.
+
+New entries are scheduled strictly after the decision timestamp and scored at the first future minute-bar open, once that bar is observed closed. Stops and targets stay at their original proposed levels; an entry already beyond either level is cancelled. Intrabar stop/target collisions use stop-first ordering; known opening gaps take precedence.
+
+One pending/open slot exists per source, instrument, and lane. Existing tickets keep their original configuration through restarts and parameter changes. The active watchlist preserves those instruments when automatic selection rotates.
+
+If required intervening bars are no longer available, a pending entry is cancelled or an open ticket becomes UNRESOLVED rather than receiving a fabricated exit. Missing-data paths can bias resolved-ticket comparisons, so the report exposes unresolved counts and stale open marks.
+
+JEV's chosen profiles may differ from the baselines' fixed standard profile. This is a comparison of complete policies, not a controlled estimate of AI-only value. The simulator has no shared portfolio margin, liquidation model, partial fills, order-book queue model, or actual funding feed.
+
+WAIT diagnostics identify the stage and show measured rule conditions and recorded model outputs. Context flags such as unknown liquidity do not establish the model's reason for waiting; free-text model reasoning is not returned.
 
 ## Hypothetical sizing
 
@@ -154,7 +188,7 @@ docker compose exec analyzer python -c \
 docker compose cp analyzer:/app/data/backup.sqlite3 ./journal-backup.sqlite3
 ```
 
-Version 0.1 does not automatically prune journal history. Monitor disk growth and archive or rotate the database while the service is stopped; keep the journal private because it contains strategy observations.
+Version 0.2 does not automatically prune journal history. Monitor disk growth and archive or rotate the database while the service is stopped; keep the journal private because it contains strategy observations.
 
 ## GitHub handoff
 
@@ -176,4 +210,3 @@ CI runs mechanical checks and builds an analysis image. It contains no live depl
 Hyperliquid's terms restrict its hosted interface for U.S. residents and prohibit evading interface restrictions; those terms alone do not resolve eligibility for direct API trading ([Hyperliquid terms](https://app.hyperliquid.xyz/terms)).
 
 The next milestone is authenticated JEV verification, richer market-data quality measurements, and a tested testnet execution module. Live trading remains a separate, explicitly scoped decision.
-# hyperliquid-jev-bot
