@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+.env.*
+data
+tests
+dist
+__pycache__
+.pytest_cache
+.ruff_cache
+*.sqlite*
+*.lock.tmp

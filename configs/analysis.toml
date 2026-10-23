@@ -1,0 +1,27 @@
+mode = "analysis"
+database = "data/journal.sqlite3"
+symbols = ["BTC", "ETH"]
+auto_select = false
+active_limit = 8
+poll_seconds = 60
+lookback_bars = 180
+data_max_age_seconds = 150
+decision_ttl_seconds = 20
+route_dwell_bars = 3
+route_refresh_bars = 5
+jev_model = "jev-1.13.0"
+jev_timeout_seconds = 8
+max_jev_calls_per_hour = 30
+skylark_health = true
+# Optional local file of legitimately obtained Skylark readings.
+# No automatic paid fetch is implemented.
+skylark_readings_file = ""
+skylark_max_age_days = 10
+
+[preview]
+# Hypothetical sizing only. NOT the user's balance or live authorization.
+reference_equity = 1000
+risk_fraction = 0.0025
+max_leverage = 3
+max_notional_fraction = 1
+cost_buffer_bps = 12

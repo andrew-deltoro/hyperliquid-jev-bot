@@ -1,0 +1,34 @@
+services:
+  analyzer:
+    build: .
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      JEV_MODEL: ${JEV_MODEL:-jev-1.13.0}
+    volumes:
+      - journal:/app/data
+      - ./configs:/app/configs:ro
+    tmpfs:
+      - /tmp:size=32m
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sqlite3,json,time; c=sqlite3.connect('file:data/journal.sqlite3?mode=ro',uri=True); r=c.execute(\"SELECT value FROM state WHERE key='heartbeat'\").fetchone(); assert r and time.time()-json.loads(r[0])['at'] < 300"
+      interval: 60s
+      timeout: 5s
+      start_period: 180s
+      retries: 3
+volumes:
+  journal:
