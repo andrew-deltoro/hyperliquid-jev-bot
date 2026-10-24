@@ -63,7 +63,19 @@ class Journal:
                 ON shadow_trades(source,instrument,lane)
                 WHERE state IN ('PENDING','OPEN');
             CREATE INDEX IF NOT EXISTS shadow_state ON shadow_trades(state);
-            PRAGMA user_version=2;
+            CREATE TABLE IF NOT EXISTS improvement_reviews (
+                id INTEGER PRIMARY KEY,
+                created_at REAL NOT NULL,
+                evidence_hash TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS research_ideas (
+                id TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                payload TEXT NOT NULL
+            );
+            PRAGMA user_version=3;
         """)
         self.db.commit()
 

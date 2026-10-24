@@ -24,6 +24,7 @@ from jevbot.decisions import DecisionError, DemoProvider, JevProvider
 from jevbot.demo import fixture
 from jevbot.diagnostics import breakdown, markdown_breakdown
 from jevbot.engine import Engine
+from jevbot.improvement import improvement_report, markdown_improvement, review_if_due
 from jevbot.journal import Journal
 from jevbot.models import Settings
 from jevbot.shadow import markdown_scoreboard, scoreboard, tracked_instruments
@@ -234,6 +235,17 @@ async def operate(args, settings: Settings, journal: Journal) -> int:
                         "MARKET_DATA_ERROR", {"instrument": instrument.id, "code": str(error)}
                     )
                     emit({"instrument": instrument.symbol, "status": str(error)})
+            review = await review_if_due(journal, settings, provider)
+            if review is not None:
+                emit(
+                    {
+                        "event": "IMPROVEMENT_REVIEW",
+                        "groups": len(review["rows"]),
+                        "new_evidence": review["new_evidence"],
+                        "jev_review": review["jev_review"]["status"],
+                        "execution_authorized": False,
+                    }
+                )
             journal.set("heartbeat", {"at": time.time(), "analysis_only": True})
             cycle += 1
             if cycles and cycle >= cycles:
@@ -274,6 +286,11 @@ def parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="View decision journal")
     report.add_argument("--output", help="Write a Markdown report")
     report.add_argument("--json", action="store_true")
+    improvement = commands.add_parser(
+        "improvement", help="Research memory and proposed challengers"
+    )
+    improvement.add_argument("--json", action="store_true")
+    improvement.add_argument("--output", help="Write Markdown or JSON to a file")
     for name, help_text, hours in (
         ("scoreboard", "Forward-only simulated strategy comparison", 0),
         ("why-wait", "Observed decision-path diagnostics, not invented AI reasoning", 24),
@@ -301,13 +318,16 @@ def main() -> int:
         if not math.isfinite(getattr(args, "hours", 0)) or getattr(args, "hours", 0) < 0:
             raise ValueError("hours must be finite and nonnegative")
         os.umask(0o077)
-        if args.command in ("report", "scoreboard", "why-wait"):
+        if args.command in ("report", "scoreboard", "why-wait", "improvement"):
             if not Path(settings.database).exists():
                 raise ValueError("Journal does not exist; run demo or scan first")
             journal = Journal(settings.database)
             try:
-                if args.command in ("scoreboard", "why-wait"):
-                    if args.command == "scoreboard":
+                if args.command in ("scoreboard", "why-wait", "improvement"):
+                    if args.command == "improvement":
+                        data = improvement_report(journal, settings)
+                        text = markdown_improvement(data)
+                    elif args.command == "scoreboard":
                         data = scoreboard(
                             journal, hours=args.hours, source=args.source, by_regime=args.by_regime
                         )

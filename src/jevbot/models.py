@@ -50,6 +50,17 @@ class ShadowSettings(StrictModel):
         return self
 
 
+class ImprovementSettings(StrictModel):
+    enabled: bool = True
+    interval_hours: int = Field(default=6, ge=1, le=168)
+    min_closed: int = Field(default=20, ge=1)
+    min_days: int = Field(default=3, ge=1)
+    recent_closed: int = Field(default=20, ge=2)
+    drawdown_review_r: float = Field(default=6, gt=0)
+    jev_review: bool = True
+    max_ideas_per_review: int = Field(default=3, ge=1, le=5)
+
+
 class Settings(StrictModel):
     mode: Literal["analysis"] = "analysis"
     database: str = "data/journal.sqlite3"
@@ -70,6 +81,7 @@ class Settings(StrictModel):
     skylark_max_age_days: int = Field(default=10, ge=1, le=30)
     preview: PreviewSettings = Field(default_factory=PreviewSettings)
     shadow: ShadowSettings = Field(default_factory=ShadowSettings)
+    improvement: ImprovementSettings = Field(default_factory=ImprovementSettings)
 
     @model_validator(mode="after")
     def symbol_budget(self):

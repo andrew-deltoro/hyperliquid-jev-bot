@@ -1,6 +1,14 @@
 # Hyperliquid JEV Bot: Build and Verification
 
-Version: 0.2.0. Prepared October 23, 2026. This adds a forward-only hypothetical strategy scoreboard and observed decision-path diagnostics; it is not a live execution release.
+Version: 0.2.1. Prepared October 23, 2026. This adds recurring evidence evaluation and bounded research memory to the existing shadow scoreboard; it is not a live execution release.
+
+## v0.2.1 verification
+
+The local Python test suite passed all 147 tests. Lint, formatting, compilation, package builds, offline CLI, and clean-baseline patch application are checked for this handoff; no authenticated JEV research call, Docker runtime, GitHub push or VPS deployment was performed for this update.
+
+The recurring evaluator uses live-source simulated outcomes, not real account returns. Weather/ORB strategy implementation and external macro-feed integration are still pending clarification.
+
+The table below records the earlier v0.2 verification history, not a claim that all earlier external checks were repeated for v0.2.1. The user has since reported deploying v0.2; the assistant has not remotely inspected that deployment.
 
 ## Delivered
 

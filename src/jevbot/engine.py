@@ -8,6 +8,7 @@ from jevbot import __version__
 from jevbot.decisions import PROMPT_VERSION, DecisionError, DecisionProvider
 from jevbot.diagnostics import explain
 from jevbot.features import DataQualityError, calculate, closed_candles, routing_options
+from jevbot.improvement import research_memory
 from jevbot.journal import Journal
 from jevbot.models import STRATEGIES, Candle, Instrument, Settings
 from jevbot.shadow import advance, enqueue
@@ -127,6 +128,10 @@ class Engine:
         except DataQualityError as error:
             return finish(str(error))
         payload["features"] = features.model_dump()
+        if self.settings.improvement.enabled:
+            payload["research_memory"] = research_memory(
+                self.journal, self.config_hash, instrument.id, features.regime
+            )
         payload["rule_setups"] = inspect_setups(valid, features)
         if self.settings.shadow.enabled:
             for strategy in STRATEGIES:

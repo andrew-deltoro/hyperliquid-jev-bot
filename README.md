@@ -1,10 +1,12 @@
 # Hyperliquid JEV Adaptive Bot
 
-Version 0.2.0 is a runnable, analysis-only Python service for a Linux VPS. It reads public Hyperliquid data, calculates intraday regimes, lets JEV select bounded strategy profiles and candidates, and stores decisions in a local journal.
+Version 0.2.1 is a runnable, analysis-only Python service for a Linux VPS. It reads public Hyperliquid data, calculates intraday regimes, lets JEV select bounded strategy profiles and candidates, and stores decisions in a local journal.
 
 **This release cannot place orders.** It has no wallet signer, exchange-order adapter, private account reader, live authorization switch, or withdrawal capability. It now includes a forward-only hypothetical trade scoreboard; it is not a backtest approval engine or a proven profitable system.
 
 For the new scoreboard, WAIT diagnostics, and the Docker permission fix, read [UPGRADE_V0_2.md](UPGRADE_V0_2.md). Existing v0.1 journals are preserved and extended with additive tables.
+
+For recurring evaluations, persistent research memory and proposal-only challengers, read [UPGRADE_V0_2_1.md](UPGRADE_V0_2_1.md). This update does not yet implement the proposed macro-weather/ORB experiments or their external data feeds.
 
 ## What works now
 
@@ -17,6 +19,7 @@ For the new scoreboard, WAIT diagnostics, and the Docker permission fix, read [U
 - **Journal:** SQLite/WAL records inputs, model decisions, versions, reason codes, candidates, and hypothetical sizing. State persists across restarts.
 - **Scoreboard:** Four deterministic baseline lanes plus a JEV policy lane, with future-bar simulated entries, modeled costs, exits, and unresolved-path tracking.
 - **WAIT diagnostics:** Separate strategy-selection WAIT, candidate WAIT, no setup, call caps, and API/data failures. Rule-trigger evidence is available without extra model calls.
+- **Recurring improvement:** Six-hour simulated-evidence reviews, context-matched memory for JEV, persistent candidate ideas, recent deterioration and missing-path warnings. No automatic code rewriting, new-strategy activation, risk increases, or profitability gates.
 - **Skylark:** Free source-health checks and optional import of a legitimately obtained local reading bundle. No payment code or automatic paid fetch.
 - **Operations:** CLI, Docker Compose, single-writer lock, log rotation, healthcheck, deterministic tests, and GitHub Actions configuration.
 

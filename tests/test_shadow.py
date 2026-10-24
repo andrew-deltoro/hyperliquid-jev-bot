@@ -265,7 +265,7 @@ def test_v1_database_migration_preserves_decisions(tmp_path):
     db.close()
     journal = Journal(path)
     assert len(journal.recent()) == 1
-    assert journal.db.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert journal.db.execute("PRAGMA user_version").fetchone()[0] == 3
     assert not scoreboard(journal)["rows"]
     journal.close()
 

@@ -34,3 +34,15 @@ fee_bps_per_side = 4.5
 slippage_bps_per_side = 2
 # Conservative flat hourly debit applied to both long and short tickets.
 funding_cost_bps_per_hour = 0.5
+
+[improvement]
+enabled = true
+interval_hours = 6
+# Descriptive labels only; these never block strategy execution or shadow entries.
+min_closed = 20
+min_days = 3
+recent_closed = 20
+drawdown_review_r = 6
+# At most one extra review call per interval, using the existing shared hourly cap.
+jev_review = true
+max_ideas_per_review = 3
